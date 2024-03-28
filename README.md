@@ -11,3 +11,13 @@ This is a set of scripts that may be helpful to people looking for a career in r
 - Export Citation Data a CSV file
 - Visualize Citation Trends
 - Used PyS2 to avoid rate limitations
+
+## Install PyS2
+
+A python library for the [Semantic Scholar (S2) API](api.semanticscholar.org/) 
+with typed [pydantic](https://pydantic-docs.helpmanual.io/) objects 
+and various nifty functionalities. 
+
+```bash
+pip install pys2
+```

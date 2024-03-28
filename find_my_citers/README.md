@@ -8,6 +8,13 @@ It is based on the [Semantic Scholar API](https://api.semanticscholar.org/api-do
 
 ## Usage
 
+Install requirements, mostly `pys2`,
+a python library for the [Semantic Scholar (S2) API](api.semanticscholar.org/).
+
+```bash
+pip install -r requirements.txt
+```
+
 Find your semantic scholar profile, and copy-paste the number from the URL. For example, if the URL is `https://www.semanticscholar.org/author/Graham-Neubig/1700325` then the number is `1700325`.
 
 ```bash

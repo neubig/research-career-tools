@@ -1,113 +1,103 @@
-# %%
-import requests
-import time
-import tqdm
 import argparse
-from collections import defaultdict
+from collections import defaultdict, Counter
+import csv
+import matplotlib.pyplot as plt
+from requests import Session
+import s2
 
 s2_api_key: str | None = None
 
+def get_author_name(author_id: str) -> str:
+    """Fetch the name of the author given the author ID."""
+    author_details = s2.api.get_author(authorId=author_id, session=session)
+    return author_details.name.replace(" ", "_")
 
-def rate_limited_get(url: str) -> requests.Response:
-    global s2_api_key
-    headers = {"x-api-key": s2_api_key} if s2_api_key else {}
-    response = requests.get(url, headers=headers)
-    retries = 0
-    while response.status_code == 429 and retries < 3:
-        # If we are being rate-limited, wait for a bit and try again
-        print(f"Rate limited, waiting {response.headers.get('Retry-After', 3)} seconds")
-        retry_after = int(response.headers.get("Retry-After", 3))
-        time.sleep(retry_after)
-        response = requests.get(url, headers=headers)
-        retries += 1
-    return response
-
-
-# Function to get an author's papers from Semantic Scholar
 def get_author_papers(author_id: str) -> list[dict]:
-    """Fetch papers for a given author ID from Semantic Scholar."""
-    papers = []
-    url = (
-        f"https://api.semanticscholar.org/graph/v1/author/{author_id}"
-        "/papers?fields=title,authors,paperId&limit=100"
-    )
-    response = rate_limited_get(url)
-    if response.status_code == 200:
-        data = response.json()
-        papers.extend(data.get("data", []))
-    else:
-        print(f"Error fetching papers for author ID {author_id}")
-    return papers
-
+    """Fetch papers for a given author ID from Semantic Scholar using PyS2."""
+    author_papers = s2.api.get_author(authorId=author_id, session=session).papers
+    return [{"title": paper.title, "paperId": paper.paperId} for paper in author_papers]
 
 def get_citations(paper_id: str) -> list[dict]:
-    """Fetch citations for a given paper ID from Semantic Scholar."""
-    url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}?fields=citations"
-    response = rate_limited_get(url)
-    if response.status_code == 200:
-        return response.json().get("citations", [])
-    else:
-        print(f"Error fetching citations for paper {paper_id}")
-        return []
-
+    """Fetch citations for a given paper ID from Semantic Scholar using PyS2, including publication year."""
+    paper_details = s2.api.get_paper(paperId=paper_id, session=session)
+    return [{"title": citation.title, "paperId": citation.paperId, "year": citation.year} for citation in paper_details.citations]
 
 def get_paper_authors(paper_id: str) -> list[dict]:
-    """Fetch authors for a given paper ID from Semantic Scholar."""
-    url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}?fields=authors"
-    response = rate_limited_get(url)
-    authors_list = []
-    if response.status_code == 200:
-        paper_data = response.json()
-        authors = paper_data.get("authors", [])
-        for author in authors:
-            # Extracting each author's name and author ID
-            authors_list.append(
-                {"name": author.get("name"), "authorId": author.get("authorId")}
-            )
-    else:
-        print(f"Error fetching authors for paper {paper_id}")
-    return authors_list
-
+    """Fetch authors for a given paper ID from Semantic Scholar using PyS2."""
+    paper_details = s2.api.get_paper(paperId=paper_id, session=session)
+    return [{"name": author.name, "authorId": author.authorId} for author in paper_details.authors]
 
 def find_my_citers(author_id: str) -> list[tuple[str, int]]:
-
-    # Get papers for the author
     your_paper_ids = get_author_papers(author_id)
     citation_counts = defaultdict(int)
-    paper_ids_only = [x["paperId"] for x in your_paper_ids]
-    for paper_id in tqdm.tqdm(paper_ids_only, desc="Processing papers"):
-        citations = get_citations(paper_id)
-        for citation in tqdm.tqdm(citations, desc="Processing citations", leave=False):
-            authors = get_paper_authors(citation["paperId"])
-            for author in authors:
-                author_name = author.get("name")
-                citation_counts[author_name] += 1
+    citation_years = []
+    total_papers = len(your_paper_ids)
+    processed_papers = 0
 
-    # Sort authors by citation count
+    for paper in your_paper_ids:
+        citations = get_citations(paper['paperId'])
+        for citation in citations:
+            if 'paperId' in citation:
+                authors = get_paper_authors(citation['paperId'])
+                for author in authors:
+                    author_name = author.get("name")
+                    citation_counts[author_name] += 1
+                citation_years.append(citation['year'])  
+
+        processed_papers += 1
+        print(f"Processed paper {processed_papers} of {total_papers}")
+
     sorted_citation_counts = sorted(
         citation_counts.items(), key=lambda item: item[1], reverse=True
     )
+    
+    return sorted_citation_counts, citation_years
 
-    return sorted_citation_counts
+def export_citation_data(sorted_citation_counts, author_name):
+    """Export citation data to a CSV file named after the author."""
+    filename = f"{author_name}_citation_data.csv"
+    with open(filename, 'w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Author', 'Citation Count'])
+        writer.writerows(sorted_citation_counts)
+    print(f"Citation data exported to {filename}")
+    return filename
 
+def plot_citation_trends(citation_years, author_name):
+    """Create and save a time-series plot of citation trends over time."""
+    year_counts = Counter(citation_years)
+    years = sorted(year_counts.keys())
+    counts = [year_counts[year] for year in years]
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(years, counts, marker='o')
+    plt.title(f'Citation Trends Over Time for {author_name}')
+    plt.xlabel('Year')
+    plt.ylabel('Number of Citations')
+    plt.tight_layout()
+    plot_filename = f"{author_name}_citation_trends.png"
+    plt.savefig(plot_filename)
+    plt.close()
+    print(f"Citation trend plot saved as {plot_filename}")
+    return plot_filename
 
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(
-        description="Find authors who have cited your work the most"
-    )
-    parser.add_argument("--author_id", help="The author ID to search for")
-    parser.add_argument(
-        "--s2_api_key",
-        type=str,
-        default=None,
-        help="An API key for semantic scholar if you have one.",
-    )
+    parser = argparse.ArgumentParser(description="Find authors who have cited your work the most using PyS2")
+    parser.add_argument("--author_id", help="The author ID to search for. If not provided, the script will prompt for input.", default=None)
+    parser.add_argument("--s2_api_key", type=str, default=None, help="An API key for semantic scholar if you have one.")
+    
     args = parser.parse_args()
-
     s2_api_key = args.s2_api_key
-    sorted_citation_counts = find_my_citers(args.author_id)
+    session = Session()
+    if s2_api_key:
+        session.headers.update({'x-api-key': s2_api_key})
 
-    # Print out the authors who cited your work the most
-    for author, count in sorted_citation_counts:
-        print(f"{author}: {count} citations")
+    if args.author_id is None:
+        author_id = input("Enter the author ID: ")
+    else:
+        author_id = args.author_id
+
+    author_name = get_author_name(author_id)
+    sorted_citation_counts, citation_years = find_my_citers(author_id)
+    csv_filename = export_citation_data(sorted_citation_counts, author_name)
+    plot_filename = plot_citation_trends(citation_years, author_name)
